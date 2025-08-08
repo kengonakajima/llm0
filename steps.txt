@@ -1,0 +1,164 @@
+LLMを最小要件から段階的に成長させて実装するための手順（素朴なテキスト）
+
+0. 前提とゴール
+- 目的: 最小の言語モデルから出発し、TransformerベースLLMへ段階的に拡張して学ぶ
+- 言語: Python, PyTorch
+- 範囲: トークナイザ→データパイプライン→モデル→学習→評価→推論→拡張
+
+1. プロジェクトの用意
+- 全部のファイルをレポのルートに置く。ディレクトリに分けない。
+- 素朴で身も蓋もない構成にする。
+
+2. Python環境の準備
+- 仮想環境を作成し有効化
+  python -m venv .venv
+  .venv/bin/python -m pip install --upgrade pip
+- 最小依存を導入（学習用CPUビルド例）
+  pip install torch --index-url https://download.pytorch.org/whl/cpu
+  pip install numpy tqdm
+- 後で段階的に追加: sentencepiece or tokenizers, safetensors, datasets, wandb 等
+
+3. データの取得（最小）
+- 学習用に小規模コーパスを用意（例: tiny shakespeare）
+- tiny_shakespeare.txt に保存
+- ライセンスを確認して使用
+
+4. 最小トークナイザ（文字単位）
+- char_tokenizer.py
+  - 文字集合の抽出、char→id, id→char の辞書作成
+  - encode(text) -> List[int]
+  - decode(List[int]) -> text
+- テスト: 簡単な往復変換の単体テスト
+
+5. データ分割とテンソル化
+- dataset.py
+  - テキストを読み込み、train/val/test に固定比率分割（例: 90/5/5、シード固定）
+  - ブロック長 block_size（例: 128）で次トークン予測用の入出力ペアを作成
+  - PyTorch Dataset/IterableDataset を用意
+
+6. 最小ベースライン（ビッグラム言語モデル）
+- bigram_lm.py
+  - 語彙サイズ V の埋め込みテーブルをロジットに直結（出力形状 [B, T, V]）
+  - 損失: クロスエントロピー（次トークン予測）
+- 学習スクリプト train.py に簡易ループを実装
+  - 反復: 取得→前向き→損失→逆伝播→optimizer.step() → ログ
+  - Optimizer: Adam (デフォルト設定)
+
+7. 動作確認（ビッグラム）
+- コマンド例
+  python train.py --model bigram --data tiny_shakespeare.txt --block-size 128 --batch-size 64 --steps 2000
+- 学習後に簡易サンプリング
+  python sample.py --model-checkpoint checkpoint_latest.pt --max-new-tokens 300 --temperature 1.0
+
+8. 学習ループの共通化
+- training_loop.py に共通ループを切り出し
+- 進捗表示: tqdm
+- ログ: 標準出力で十分（後でW&B等に拡張）
+
+9. 単一ヘッド自己注意の実装
+- attention.py
+  - 単一ヘッドの自己注意（Q,K,V）
+  - 因果マスク（上三角を -inf）
+  - スケーリング softmax(QK^T / sqrt(d))
+
+10. 位置埋め込み
+- 学習可能なトークン埋め込みと位置埋め込みを足し合わせる
+- components.py に Embedding 層を用意
+
+11. Transformer ブロック（最小）
+- block.py
+  - Pre-LN 構成: x = x + Attn(LN(x))、x = x + MLP(LN(x))
+  - MLP: 2層（hidden = 4*dim）+ GELU
+
+12. マルチヘッド化
+- attention を複数ヘッドに拡張、出力を結合して線形射影
+- ドロップアウトは後で追加（最初は無し）
+
+13. デコーダのみミニTransformer
+- transformer.py
+  - n_layer, n_head, n_embd, vocab_size, block_size を設定可能
+  - forward: 入力→埋め込み→ブロック×N→LayerNorm→線形でロジット
+- 学習/推論のインターフェイスを bigram と揃える
+
+14. 最適化の改善
+- Optimizer を AdamW に変更、weight decay 追加
+- 学習率スケジューラ: ウォームアップ + コサイン減衰（簡易実装）
+- 勾配クリッピング（例: 1.0）
+
+15. データローダの改善
+- DataLoader でシャッフル/複数ワーカ（CPU数に応じて）
+- 長いテキストに対するストライド型ブロック作成で無駄を減らす
+
+16. BPE トークナイザの自作または導入
+- 最初は自作の簡易BPE（マージ操作回数を制限）
+  bpe_tokenizer.py
+- もしくはライブラリ（sentencepiece/tokenizers）で実装を短縮
+- tokenizer_vocab.json / tokenizer_merges.txt（または相当）を保存/読み込み
+
+17. BPE 統合と再学習
+- データを再トークナイズ（例: tokens.npy 等をルートに保存）
+- Transformer ミニモデルで再学習
+- バリデーションPPLをビッグラム/文字トークナイザと比較
+
+18. チェックポイント保存/再開
+- checkpoint.py
+  - model.state_dict, optimizer, scheduler, step, rng_state を保存
+  - best.ppl と checkpoint_latest.pt を両方管理
+
+19. サンプリングの高度化
+- sample.py
+  - temperature, top-k, top-p, repetition penalty をサポート
+  - 逐次生成ループと最大トークン数
+
+20. 評価指標
+- 検証/テストでの平均損失とPPL
+- 任意: 固定プロンプトでのサンプル出力保存
+
+21. 混合精度訓練
+- autocast(float16/bfloat16) + GradScaler（GPU/Apple Silicon環境に応じて）
+- オフの場合は自動でFP32にフォールバック
+
+22. 勾配累積
+- 大きなバッチを模擬するために accumulation_steps を導入
+- ステップ毎の正規化（lrスケジューラと整合）
+
+23. モデル/トークナイザの保存形式
+- safetensors（任意）で安全・高速に保存
+- トークナイザはJSONで設定/語彙/マージを保存
+
+24. 推論CLI/簡易サーバ
+- cli.py
+  - 対話的プロンプト→生成→表示
+- 任意: FastAPI で /generate エンドポイント（開発者用）
+
+25. 微調整（LoRA の基礎）
+- 小規模指示データで SFT を試す
+- 重み凍結 + LoRA アダプタ（任意で peft 導入）
+
+26. データ前処理の強化
+- 正規化、重複排除、短文フィルタ、言語検出（多言語時）
+
+27. テストの追加
+- test_tokenizer.py（往復、未知語処理）
+- test_attention.py（マスクの正しさ）
+- test_sampling.py（温度/トップkの境界）
+
+28. 追加データでの再学習
+- 日本語（青空文庫、Wikipedia 抜粋等）、英語混合
+- ライセンス遵守とクリーンデータ化
+
+29. 量子化と軽量化（任意）
+- 8bit/4bit 量子化（GPUがある場合）
+- 重み共有、KVキャッシュの最適化
+
+30. 次の学習の道標
+- コンテキスト長の拡張（RoPE/ALiBi の導入）
+- 位置補間、FlashAttention の活用
+- コード生成などタスク特化微調整
+- 評価ハーネス（多様なベンチマーク）
+
+付記: 最小実行順序の目安
+- 1→2→3→4→5→6→7 までで「動くLM（ビッグラム）」
+- 8→9→10→11→12→13→14→15 で「最小Transformer」
+- 16→17→18→19→20 で「実用の体裁」
+- 21 以降は拡張と最適化
