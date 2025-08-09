@@ -102,7 +102,7 @@ def main() -> None:
         print(tokenizer.decode(out_ids.tolist()))
         print()
 
-    train(
+    final_loss, elapsed_s = train(
         model,
         batches,
         optimizer,
@@ -110,7 +110,9 @@ def main() -> None:
         scheduler=None,
         sample_fn=sample_fn,
         device=device,
+        mem_cap_gb=16.0,
     )
+    print(f"[Finished] steps={cfg.steps}, final_loss={final_loss:.4f}, elapsed={elapsed_s:.2f}s")
 
 
 if __name__ == "__main__":

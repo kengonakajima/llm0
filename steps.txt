@@ -9,13 +9,22 @@ LLMを最小要件から段階的に成長させて実装するための手順�
 - 全部のファイルをレポのルートに置く。ディレクトリに分けない。
 - 素朴で身も蓋もない構成にする。
 
-2. Python環境の準備
-- 仮想環境を作成し有効化
+2. Python環境の準備（仮想環境は必須）
+- PEP 668（外部管理環境エラー）を避けるため、必ず仮想環境を使う
   python -m venv .venv
-  .venv/bin/python -m pip install --upgrade pip
-- 最小依存を導入（学習用CPUビルド例）
-  pip install torch --index-url https://download.pytorch.org/whl/cpu
-  pip install numpy tqdm
+  .venv/bin/python -m pip install --upgrade pip setuptools wheel
+- 依存の最小セットを入れる
+  .venv/bin/python -m pip install numpy tqdm
+- PyTorch を入れる（Apple Silicon / macOS）
+  .venv/bin/python -m pip install torch
+  （注）macOSのtorchはMPS(GPU)対応ビルド。NVIDIA CUDA 環境では各自のCUDA版を使う
+- デバイス確認（cuda/mps/cpu が True か確認）
+  .venv/bin/python - <<'PY'
+  import torch
+  print('cuda:', torch.cuda.is_available())
+  print('mps :', getattr(torch.backends,'mps',None) is not None and torch.backends.mps.is_available())
+  PY
+- 以後は ./.venv/bin/python でスクリプトを実行する（システムPythonは使わない）
 - 後で段階的に追加: sentencepiece or tokenizers, safetensors, datasets, wandb 等
 
 3. データの取得（最小）

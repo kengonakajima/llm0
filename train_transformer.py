@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from char_tokenizer import CharTokenizer
+from dataset import split_token_ids
 from transformer import TransformerLM, TransformerLMConfig
 from training_loop import TrainLoopConfig, get_device, set_seed, train
 
@@ -34,6 +35,25 @@ def get_batches(token_ids: np.ndarray, block_size: int, batch_size: int, device:
         xs = torch.stack([x[i : i + block_size] for i in idx], dim=0)
         ys = torch.stack([y[i : i + block_size] for i in idx], dim=0)
         yield xs, ys
+
+
+@torch.no_grad()
+def eval_loss_and_ppl(model: torch.nn.Module, token_ids: np.ndarray, block_size: int, device: torch.device, *, batches: int = 20, batch_size: int = 128) -> tuple[float, float]:
+    model.eval()
+    x = torch.tensor(token_ids[:-1], dtype=torch.long, device=device)
+    y = torch.tensor(token_ids[1:], dtype=torch.long, device=device)
+    N = x.shape[0]
+    total_loss = 0.0
+    for _ in range(batches):
+        idx = torch.randint(0, N - block_size, (batch_size,), device=device)
+        xs = torch.stack([x[i : i + block_size] for i in idx], dim=0)
+        ys = torch.stack([y[i : i + block_size] for i in idx], dim=0)
+        _, loss = model(xs, ys)
+        total_loss += float(loss.item())
+    avg_loss = total_loss / max(1, batches)
+    ppl = float(np.exp(avg_loss))
+    model.train()
+    return avg_loss, ppl
 
 
 def main() -> None:
@@ -71,6 +91,9 @@ def main() -> None:
     text = corpus_path.read_text(encoding="utf-8")
     tokenizer = CharTokenizer.from_text(text)
     token_ids = np.array(tokenizer.encode(text), dtype=np.int64)
+    train_ids, val_ids, test_ids = split_token_ids(list(token_ids))
+    train_ids = np.array(train_ids, dtype=np.int64)
+    val_ids = np.array(val_ids, dtype=np.int64)
 
     device = get_device()
     model_cfg = TransformerLMConfig(
@@ -110,13 +133,16 @@ def main() -> None:
         return 0.5 * (1.0 + math.cos(math.pi * progress))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
-    batches = get_batches(token_ids, cfg.block_size, cfg.batch_size, device)
+    batches = get_batches(train_ids, cfg.block_size, cfg.batch_size, device)
 
     print("[Training Transformer LM]")
     print(f"Device: {device}")
     print(f"Vocab: {tokenizer.vocab_size}, Block: {cfg.block_size}, Layers: {cfg.n_layer}, Heads: {cfg.n_head}, Embd: {cfg.n_embd}")
 
     def sample_fn(step: int) -> None:
+        # Validation metrics (for visibility)
+        val_loss, val_ppl = eval_loss_and_ppl(model, val_ids, cfg.block_size, device, batches=10, batch_size=min(256, cfg.batch_size))
+        print(f"\n[Val] step={step} loss={val_loss:.4f} ppl={val_ppl:.2f}")
         with torch.no_grad():
             # Seed with a single random token id
             start_id = int(torch.randint(0, tokenizer.vocab_size, (1,), device=device).item())
@@ -126,15 +152,36 @@ def main() -> None:
             print(tokenizer.decode(out[0].tolist()))
             print()
 
-    train(
+    # Early stopping evaluator: returns validation loss only
+    def val_eval_fn() -> float:
+        val_loss, _ = eval_loss_and_ppl(model, val_ids, cfg.block_size, device, batches=10, batch_size=min(256, cfg.batch_size))
+        return val_loss
+
+    final_loss, elapsed_s = train(
         model,
         batches,
         optimizer,
-        cfg=TrainLoopConfig(steps=cfg.steps, log_every=max(1, cfg.steps // 10), grad_clip=1.0, amp=False, accum_steps=1, sample_every=max(1, cfg.steps // 2)),
+        cfg=TrainLoopConfig(
+            steps=cfg.steps,
+            log_every=max(1, cfg.steps // 10),
+            grad_clip=1.0,
+            amp=False,
+            accum_steps=1,
+            sample_every=max(1, cfg.steps // 2),
+            early_stop_eval_interval=200,
+            early_stop_min_steps=1000,
+            early_stop_patience=5,
+            early_stop_min_delta=0.005,
+        ),
         scheduler=scheduler,
         sample_fn=sample_fn,
         device=device,
+        mem_cap_gb=16.0,
+        val_eval_fn=val_eval_fn,
     )
+    # Final validation after training
+    val_loss, val_ppl = eval_loss_and_ppl(model, val_ids, cfg.block_size, device, batches=20, batch_size=min(256, cfg.batch_size))
+    print(f"[Finished] steps={cfg.steps}, final_loss={final_loss:.4f}, elapsed={elapsed_s:.2f}s, val_loss={val_loss:.4f}, val_ppl={val_ppl:.2f}")
 
 
 if __name__ == "__main__":

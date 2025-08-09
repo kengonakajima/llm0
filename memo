@@ -1,17 +1,6 @@
 結果memo
 
 
-- 1回目
-
-./.venv/bin/python train_transformer.py --steps 1000 --block-size 256 --batch-size 256 --n-layer 4 --n-head 4 --n-embd 256 --lr 6e-4
-
-train: 100% 1000/1000 [12:20<00:00,  1.35it/s, step=1000 loss=1.2675]
-[Finished] steps=1000, final_loss=1.2675, elapsed=740.35s, val_loss=1.4777, val_ppl=4.38
-
-
-結果memo
-
-
 python3 train_bigram.py --steps 200 --batch-size 8192 --lr 0.03 --temperature 1.0
 
 5000	1.4354
@@ -29,7 +18,7 @@ python3 train_bigram.py --steps 200 --batch-size 8192 --lr 0.03 --temperature 1.
 
 
 
-# 早期停止を入れた。 final_lossが0.6まで下がった
+# 早期停止を入れた。
 ./.venv/bin/python train_transformer.py --steps 10000 --block-size 256 --batch-size 256 --n-layer 4 --n-head 4 --n-embd 256 --lr 6e-4
 
 train:  22% 2199/10000 [23:56<1:24:57,  1.53it/s, step=2000 loss=0.7192]
