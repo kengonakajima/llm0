@@ -181,7 +181,20 @@ def main() -> None:
     )
     # Final validation after training
     val_loss, val_ppl = eval_loss_and_ppl(model, val_ids, cfg.block_size, device, batches=20, batch_size=min(256, cfg.batch_size))
+    # Save latest checkpoint
+    ckpt_path = pathlib.Path("transformer_latest.pt")
+    torch.save({
+        "state_dict": model.state_dict(),
+        "config": {
+            "vocab_size": tokenizer.vocab_size,
+            "block_size": cfg.block_size,
+            "n_layer": cfg.n_layer,
+            "n_head": cfg.n_head,
+            "n_embd": cfg.n_embd,
+        },
+    }, ckpt_path)
     print(f"[Finished] steps={cfg.steps}, final_loss={final_loss:.4f}, elapsed={elapsed_s:.2f}s, val_loss={val_loss:.4f}, val_ppl={val_ppl:.2f}")
+    print(f"[Saved] {ckpt_path.resolve()}")
 
 
 if __name__ == "__main__":

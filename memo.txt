@@ -36,4 +36,19 @@ train:  22% 2199/10000 [23:56<1:24:57,  1.53it/s, step=2000 loss=0.7192]
 [Finished] steps=10000, final_loss=0.6303, elapsed=1436.80s, val_loss=2.1621, val_ppl=8.69
 
 
+# 重み共有（weight tying）をtransformer.pyに実装しました。学習・保存・生成まで動作確認済みです。
+  • 変更点
+    • TransformerLM.__init__で出力ヘッドと埋め込みの重みを共有
+      • self.head.weight = self.token_embed.weight
+  • 期待効果
+    • パラメータ削減＋学習の安定化
+    • 一般にval PPLがわずかに改善することが多い
 
+
+./.venv/bin/python train_transformer.py --steps 5000 --block-size 256 --batch-size 256 --n-layer 4 --n-head 4 --n-embd 256 --lr 6e-4
+
+train:  44% 2199/5000 [24:19<30:59,  1.51it/s, step=2000 loss=0.6517]  
+[Finished] steps=5000, final_loss=0.5669, elapsed=1459.53s, val_loss=2.1766, val_ppl=8.82
+[Saved] /Users/ringo/llm0/transformer_latest.pt
+
+確かに下がった。

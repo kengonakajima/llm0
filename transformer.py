@@ -87,6 +87,9 @@ class TransformerLM(nn.Module):
 
         self.apply(self._init_weights)
 
+        # Weight tying: share output projection with token embedding
+        self.head.weight = self.token_embed.weight
+
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, (nn.Linear, nn.Embedding)):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
