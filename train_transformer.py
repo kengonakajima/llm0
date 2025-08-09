@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
+import math
 
 import numpy as np
 import torch
@@ -81,7 +82,33 @@ def main() -> None:
     )
     model = TransformerLM(model_cfg).to(device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr)
+    # AdamW with decoupled weight decay and parameter groups (exclude bias and norm params)
+    no_decay_keys = ["bias", "ln", "norm"]
+    decay_params = []
+    no_decay_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if any(k in name.lower() for k in no_decay_keys):
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+    param_groups = [
+        {"params": decay_params, "weight_decay": 0.1},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+    optimizer = torch.optim.AdamW(param_groups, lr=cfg.lr)
+
+    # Warmup + Cosine decay scheduler over total steps
+    total_steps = max(1, cfg.steps)
+    warmup_steps = max(1, int(total_steps * 0.05))
+    def lr_lambda(step_idx: int):
+        # step_idx starts at 0 in LambdaLR
+        if step_idx < warmup_steps:
+            return float(step_idx + 1) / float(warmup_steps)
+        progress = (step_idx - warmup_steps) / max(1, (total_steps - warmup_steps))
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
     batches = get_batches(token_ids, cfg.block_size, cfg.batch_size, device)
 
@@ -104,7 +131,7 @@ def main() -> None:
         batches,
         optimizer,
         cfg=TrainLoopConfig(steps=cfg.steps, log_every=max(1, cfg.steps // 10), grad_clip=1.0, amp=False, accum_steps=1, sample_every=max(1, cfg.steps // 2)),
-        scheduler=None,
+        scheduler=scheduler,
         sample_fn=sample_fn,
         device=device,
     )

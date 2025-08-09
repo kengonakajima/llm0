@@ -87,7 +87,7 @@ def main() -> None:
 
     device = get_device()
     model = TorchBigramLM(tokenizer.vocab_size).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=0.1)
 
     batches = get_batches(token_ids, cfg.batch_size, device)
 
