@@ -1,17 +1,20 @@
 結果memo
 
 
-python3 train_bigram.py --steps 200 --batch-size 8192 --lr 0.03 --temperature 1.0
+1. 最初のやつ
+python3 train_bigram.py --steps 5000 --batch-size 8192 --lr 0.03 --temperature 1.0
 
 5000	1.4354
 
 
+2. いちばん良かったやつ
 ./.venv/bin/python train_transformer.py --steps 1000 --block-size 256 --batch-size 256 --n-layer 4 --n-head 4 --n-embd 256 --lr 6e-4
 
 1000	1.0954
 
 
+3. 動かなかった奴。メモリがたりん
 
 ./.venv/bin/python train_transformer.py --steps 2000 --block-size 512 --batch-size 256 --n-layer 6 --n-head 8 --n-embd 512 --lr 3e-4
 
-これは動かない
+
