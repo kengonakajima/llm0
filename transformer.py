@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, n_embd: int, n_head: int, block_size: int) -> None:
+    def __init__(self, n_embd: int, n_head: int, block_size: int, dropout: float = 0.1) -> None:
         super().__init__()
         assert n_embd % n_head == 0, "n_embd must be divisible by n_head"
         self.n_head = n_head
@@ -21,6 +21,8 @@ class CausalSelfAttention(nn.Module):
         self.k_proj = nn.Linear(n_embd, n_embd, bias=False)
         self.v_proj = nn.Linear(n_embd, n_embd, bias=False)
         self.out_proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.attn_drop = nn.Dropout(dropout)
+        self.resid_drop = nn.Dropout(dropout)
 
         # causal mask buffer (lower triangular)
         mask = torch.tril(torch.ones(block_size, block_size, dtype=torch.bool))
@@ -36,29 +38,32 @@ class CausalSelfAttention(nn.Module):
         # apply causal mask
         attn_scores = attn_scores.masked_fill(~self.mask[:T, :T], float('-inf'))
         attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_weights = self.attn_drop(attn_weights)
         y = attn_weights @ v  # [B, nh, T, hd]
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.out_proj(y)
+        y = self.resid_drop(y)
         return y
 
 
 class MLP(nn.Module):
-    def __init__(self, n_embd: int) -> None:
+    def __init__(self, n_embd: int, dropout: float = 0.1) -> None:
         super().__init__()
         self.fc1 = nn.Linear(n_embd, 4 * n_embd)
         self.fc2 = nn.Linear(4 * n_embd, n_embd)
+        self.drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc2(F.gelu(self.fc1(x)))
+        return self.drop(self.fc2(F.gelu(self.fc1(x))))
 
 
 class Block(nn.Module):
-    def __init__(self, n_embd: int, n_head: int, block_size: int) -> None:
+    def __init__(self, n_embd: int, n_head: int, block_size: int, dropout: float = 0.1) -> None:
         super().__init__()
         self.ln1 = nn.LayerNorm(n_embd)
-        self.attn = CausalSelfAttention(n_embd, n_head, block_size)
+        self.attn = CausalSelfAttention(n_embd, n_head, block_size, dropout=dropout)
         self.ln2 = nn.LayerNorm(n_embd)
-        self.mlp = MLP(n_embd)
+        self.mlp = MLP(n_embd, dropout=dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.ln1(x))
@@ -108,17 +113,37 @@ class TransformerLM(nn.Module):
         logits = self.head(x)  # [B, T, V]
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(B * T, -1), targets.view(B * T))
+            loss = F.cross_entropy(logits.view(B * T, -1), targets.view(B * T), label_smoothing=0.1)
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0) -> torch.Tensor:
+    def generate(
+        self,
+        idx: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None,
+    ) -> torch.Tensor:
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.cfg.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :]
             if temperature != 1.0:
                 logits = logits / temperature
+            # Top-k / Top-p filtering on logits
+            if top_k is not None and top_k > 0:
+                topk_vals, topk_idx = torch.topk(logits, k=min(top_k, logits.size(-1)), dim=-1)
+                mask = torch.full_like(logits, fill_value=-float('inf'))
+                logits = mask.scatter(-1, topk_idx, topk_vals)
+            if top_p is not None and 0.0 < top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                sorted_mask = cumulative_probs > top_p
+                # keep at least one token
+                sorted_mask[..., 0] = False
+                filtered_logits = sorted_logits.masked_fill(sorted_mask, -float('inf'))
+                logits = torch.full_like(logits, -float('inf')).scatter(-1, sorted_indices, filtered_logits)
             probs = F.softmax(logits, dim=-1)
             next_id = torch.multinomial(probs, num_samples=1)
             idx = torch.cat([idx, next_id], dim=1)

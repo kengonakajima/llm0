@@ -52,3 +52,34 @@ train:  44% 2199/5000 [24:19<30:59,  1.51it/s, step=2000 loss=0.6517]
 [Saved] /Users/ringo/llm0/transformer_latest.pt
 
 確かに下がった。
+
+
+#   重み共有の次として、少改修で効く3点を入れました。すべて素朴な実装で、学習と生成の質の改善が期待
+  できます。
+  • 追加した改良
+    • ドロップアウト0.1
+      • 注意の確率重みと残差、MLP出力に適用
+    • ラベルスムージング0.1
+      • 交差エントロピーの引数で有効化
+
+
+
+./.venv/bin/python train_transformer.py --steps 5000 --block-size 256 --batch-size 256 --n-layer 4 --n-head 4 --n-embd 256 --lr 6e-4
+[Training Transformer LM]
+Device: mps
+Vocab: 65, Block: 256, Layers: 4, Heads: 4, Embd: 256
+train:   0% 0/5000 [00:03<?, ?it/s, step=1 loss=4.1987]
+[Val] step=1 loss=4.1862 ppl=65.77
+
+--- Sample ---
+b$LZZkHUHeyqpj$W!BcjOSQf!LOKeS Je!D;OFAQa;f3UIva.qajEQsOupCWldy:&jXVKNqEe!t--.F O,VTrhX$zrpdqH;RDdeH;O:gK!!uXVVsae$$xtpf:$-cHYwHCG3kH.vg'3xFkk'
+qMO:;?gBq3iNqHhns'F3HGGjk?-myYkOavWFGgVll!Jw
+BLi-VSxr;rG
+
+
+train:  48% 2399/5000 [29:42<32:12,  1.35it/s, step=2000 loss=1.6647]  
+[Finished] steps=5000, final_loss=1.6260, elapsed=1782.12s, val_loss=1.9594, val_ppl=7.10
+[Saved] /Users/ringo/llm0/transformer_latest.pt
+
+
+lossは増えたけど、val_pplが下がった
