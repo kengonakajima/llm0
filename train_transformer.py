@@ -1,30 +1,14 @@
 from __future__ import annotations
 
 import pathlib
-import random
 from dataclasses import dataclass
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 from char_tokenizer import CharTokenizer
 from transformer import TransformerLM, TransformerLMConfig
-
-
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
+from training_loop import TrainLoopConfig, get_device, set_seed, train
 
 
 @dataclass
@@ -104,29 +88,26 @@ def main() -> None:
     print("[Training Transformer LM]")
     print(f"Device: {device}")
     print(f"Vocab: {tokenizer.vocab_size}, Block: {cfg.block_size}, Layers: {cfg.n_layer}, Heads: {cfg.n_head}, Embd: {cfg.n_embd}")
-    print("step\tloss")
 
-    for step in range(1, cfg.steps + 1):
-        x, y = next(batches)
-        logits, loss = model(x, y)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+    def sample_fn(step: int) -> None:
+        with torch.no_grad():
+            # Seed with a single random token id
+            start_id = int(torch.randint(0, tokenizer.vocab_size, (1,), device=device).item())
+            context = torch.tensor([[start_id]], dtype=torch.long, device=device)
+            out = model.generate(context, max_new_tokens=200, temperature=cfg.temperature)
+            print("\n--- Sample ---")
+            print(tokenizer.decode(out[0].tolist()))
+            print()
 
-        if step % max(1, cfg.steps // 10) == 0 or step == 1:
-            print(f"{step}\t{loss.item():.4f}")
-
-        if step in {1, cfg.steps // 2, cfg.steps}:
-            with torch.no_grad():
-                start = torch.randint(0, len(token_ids) - cfg.block_size - 1, (1,), device=device)
-                context = torch.tensor(token_ids[start : start + 1], dtype=torch.long, device=device)
-                # seed with a single token id
-                context = context.view(1, 1)
-                out = model.generate(context, max_new_tokens=200, temperature=cfg.temperature)
-                print("--- Sample ---")
-                print(tokenizer.decode(out[0].tolist()))
-                print()
+    train(
+        model,
+        batches,
+        optimizer,
+        cfg=TrainLoopConfig(steps=cfg.steps, log_every=max(1, cfg.steps // 10), grad_clip=1.0, amp=False, accum_steps=1, sample_every=max(1, cfg.steps // 2)),
+        scheduler=None,
+        sample_fn=sample_fn,
+        device=device,
+    )
 
 
 if __name__ == "__main__":
