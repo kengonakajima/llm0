@@ -83,3 +83,32 @@ train:  48% 2399/5000 [29:42<32:12,  1.35it/s, step=2000 loss=1.6647]
 
 
 lossは増えたけど、val_pplが下がった
+
+
+
+#   評価の安定化を実装しました。検証時はランダムではなく、コーパス上を等間隔に区切った固定ウインドウ
+  で評価します。
+  • 変更
+    • eval_loss_and_pplを決定論的な「固定・等間隔ウインドウ評価」に変更
+    • 目的: 検証ノイズ低減、早期終了や比較時の安定性向上
+  • 使い方
+    • そのまま実行でOK。ログの[Val]と終了時のval_loss/val_pplが以前より安定します。
+
+
+
+[@mbp2021 llm0]$ ./.venv/bin/python train_transformer.py --steps 5000 --block-size 256 --batch-size 256 --n-layer 4 --n-head 4 --n-embd 256 --lr 6e-4
+[Training Transformer LM]
+Device: mps
+Vocab: 65, Block: 256, Layers: 4, Heads: 4, Embd: 256
+train:   0% 0/5000 [00:03<?, ?it/s, step=1 loss=4.1987]
+[Val] step=1 loss=4.1870 ppl=65.82
+
+--- Sample ---
+ULo-VCdo.!g,dtC kD.p:cWhOOjIxXa;WcgUqI;T-Ibx?UgoMWretJlbmSu!ZEmg'WstQHIgqOvkuYQV??
+-axdXrr'ShTClVxV$mwnP..'PeebAqW!tFyi;cdu,w
+M!zRvBSshXt3nHvxxeo.zOSGVUb
+XlQ-UjJtIXOAG?Ns'R?pdvhi.ROjciokKc&xeY yupvhdZM
+
+train:  48% 2399/5000 [33:01<35:48,  1.21it/s, step=2000 loss=1.6619]  
+[Finished] steps=5000, final_loss=1.6254, elapsed=1981.20s, val_loss=1.9319, val_ppl=6.90
+[Saved] /Users/ringo/llm0/transformer_latest.pt

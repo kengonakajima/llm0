@@ -38,19 +38,60 @@ def get_batches(token_ids: np.ndarray, block_size: int, batch_size: int, device:
 
 
 @torch.no_grad()
-def eval_loss_and_ppl(model: torch.nn.Module, token_ids: np.ndarray, block_size: int, device: torch.device, *, batches: int = 20, batch_size: int = 128) -> tuple[float, float]:
+def eval_loss_and_ppl(
+    model: torch.nn.Module,
+    token_ids: np.ndarray,
+    block_size: int,
+    device: torch.device,
+    *,
+    batches: int = 20,
+    batch_size: int = 128,
+) -> tuple[float, float]:
+    """Deterministic validation using fixed, evenly spaced windows.
+
+    Reduces evaluation noise vs. random sampling by selecting fixed start
+    offsets that evenly cover the sequence. Reproducible across runs.
+    """
     model.eval()
-    x = torch.tensor(token_ids[:-1], dtype=torch.long, device=device)
-    y = torch.tensor(token_ids[1:], dtype=torch.long, device=device)
-    N = x.shape[0]
+    x_full = torch.tensor(token_ids[:-1], dtype=torch.long, device=device)
+    y_full = torch.tensor(token_ids[1:], dtype=torch.long, device=device)
+    N = int(x_full.shape[0])
+
+    # Number of available start positions
+    max_start = max(0, N - block_size)
+    if max_start == 0:
+        # Fallback: single tiny batch
+        xs = x_full[:block_size].unsqueeze(0)
+        ys = y_full[:block_size].unsqueeze(0)
+        _, loss = model(xs, ys)
+        avg_loss = float(loss.item())
+        model.train()
+        return avg_loss, float(np.exp(avg_loss))
+
+    # Build a fixed list of start indices, evenly spaced across the range
+    num_eval_batches = max(1, batches)
+    starts = np.linspace(0, max_start - 1, num=num_eval_batches, dtype=int)
     total_loss = 0.0
-    for _ in range(batches):
-        idx = torch.randint(0, N - block_size, (batch_size,), device=device)
-        xs = torch.stack([x[i : i + block_size] for i in idx], dim=0)
-        ys = torch.stack([y[i : i + block_size] for i in idx], dim=0)
+    for s in starts:
+        # Within each window, take a fixed mini-batch of contiguous chunks
+        # Using contiguous slices for stability; stride equals block_size
+        window_end = min(s + block_size * batch_size, N)
+        # If not enough room, back off start to fit at least one slice
+        if window_end - s < block_size:
+            s = max(0, window_end - block_size)
+        xs_list = []
+        ys_list = []
+        pos = s
+        while pos + block_size <= window_end and len(xs_list) < batch_size:
+            xs_list.append(x_full[pos : pos + block_size])
+            ys_list.append(y_full[pos : pos + block_size])
+            pos += block_size
+        xs = torch.stack(xs_list, dim=0)
+        ys = torch.stack(ys_list, dim=0)
         _, loss = model(xs, ys)
         total_loss += float(loss.item())
-    avg_loss = total_loss / max(1, batches)
+
+    avg_loss = total_loss / float(num_eval_batches)
     ppl = float(np.exp(avg_loss))
     model.train()
     return avg_loss, ppl
